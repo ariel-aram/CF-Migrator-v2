@@ -34,7 +34,7 @@ You can import data from your migration file by running the following eval comma
 ```py
 import base64, requests
 
-request = requests.get("https://api.github.com/repos/Dotsian/CF-Migrator/contents/src/import.py")
+request = requests.get("https://github.com/ItsMeFuture/CF-Migrator-v2/blob/main/src/import.py")
 
 await ctx.invoke(
     bot.get_command("eval"),
