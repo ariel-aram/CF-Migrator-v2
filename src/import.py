@@ -25,7 +25,7 @@ from ballsdex.core.models import (
     TradeObject,
 )
 
-__version__ = "1.0.1"
+__version__ = "1.0.2-with-placeholders"  # Claude AI - Version marker
 
 # ----------- ChatGPT Starts Here -------------
 def safe_int(value):
