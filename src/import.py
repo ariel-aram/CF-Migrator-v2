@@ -333,6 +333,9 @@ async def load(message):
     start_time = time.time()
 
     # Claude AI - Process each model type separately and handle duplicates
+    # Claude AI - Track inserted IDs for foreign key validation
+    inserted_ids = {}
+    
     for item, value in data.items():
         output.append(f"- Processing {item.__name__}... ({len(value):,} records to validate)")  # Claude AI - Progress message
         await message.edit(embed=reload_embed())
@@ -340,10 +343,18 @@ async def load(message):
         # Claude AI - Get field definitions to check which fields are required
         fields_map = item._meta.fields_map
         
+        # Claude AI - Identify foreign key fields for this model
+        fk_fields = {}
+        for field_name, field_obj in fields_map.items():
+            # Check if this is a ForeignKeyField
+            if hasattr(field_obj, 'related_model') and field_obj.related_model is not None:
+                fk_fields[field_name] = field_obj.related_model
+        
         # Claude AI - Remove duplicates based on ID and skip records with invalid data
         seen_ids = set()
         unique_values = []
         skipped_count = 0
+        fk_violation_count = 0
         
         for idx, model in enumerate(value):
             # Claude AI - Progress update every 5000 records during validation
@@ -360,6 +371,23 @@ async def load(message):
             
             # Claude AI - Skip duplicate IDs
             if model_id in seen_ids:
+                skipped_count += 1
+                continue
+            
+            # Claude AI - Validate foreign key references
+            has_invalid_fk = False
+            for fk_field_name, related_model in fk_fields.items():
+                fk_value = model.get(fk_field_name)
+                if fk_value is not None:
+                    # Check if the referenced ID exists in our inserted_ids tracking
+                    if related_model in inserted_ids:
+                        if fk_value not in inserted_ids[related_model]:
+                            # Invalid foreign key reference
+                            has_invalid_fk = True
+                            fk_violation_count += 1
+                            break
+            
+            if has_invalid_fk:
                 skipped_count += 1
                 continue
             
@@ -405,27 +433,42 @@ async def load(message):
         if items:  # Claude AI - Only bulk_create if we have items
             try:
                 await item.bulk_create(items)
+                
+                # Claude AI - Track successfully inserted IDs for foreign key validation
+                inserted_ids[item] = seen_ids
+                
             except Exception as e:
-                # Claude AI - If bulk_create fails, try one by one
-                output[-1] = f"- Bulk create failed for {item.__name__}, trying individually..."
+                # Claude AI - Log the actual error to help debug
+                error_msg = f"ERROR: {type(e).__name__}: {str(e)[:200]}"
+                output.append(f"- Bulk create failed for {item.__name__}: {error_msg}")
+                output.append(f"- Attempting individual saves for {len(items):,} records (THIS WILL BE SLOW)...")
                 await message.edit(embed=reload_embed())
                 
                 success_count = 0
+                successful_ids = set()
+                
                 for idx, single_item in enumerate(items):
                     if idx > 0 and idx % 1000 == 0:
-                        output[-1] = f"- Saving {item.__name__} individually... ({idx:,}/{len(items):,})"
+                        output[-1] = f"- Saving {item.__name__} individually... ({idx:,}/{len(items):,} - ~{int((idx/len(items))*100)}% done)"
                         await message.edit(embed=reload_embed())
                     
                     try:
                         await single_item.save()
                         success_count += 1
+                        # Track the ID of successfully saved items
+                        if hasattr(single_item, 'id'):
+                            successful_ids.add(single_item.id)
                     except Exception:
                         skipped_count += 1
                 
+                # Claude AI - Track IDs that were actually saved
+                inserted_ids[item] = successful_ids
                 items = [None] * success_count  # Just for counting
 
         msg = f"- Added **{len(items):,}** {item.__name__} objects."
-        if skipped_count > 0:
+        if fk_violation_count > 0:
+            msg += f" (skipped {fk_violation_count} FK violations, {skipped_count - fk_violation_count} other invalid/duplicates)"
+        elif skipped_count > 0:
             msg += f" (skipped {skipped_count} invalid/duplicates)"
         output[-1] = msg  # Claude AI - Replace progress message with final count
         await message.edit(embed=reload_embed())
