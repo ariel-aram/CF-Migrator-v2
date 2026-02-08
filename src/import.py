@@ -322,7 +322,7 @@ async def load(message):
 
     # Claude AI - Process each model type separately and handle duplicates
     for item, value in data.items():
-        # Claude AI - Remove duplicates based on ID and skip records with null IDs
+        # Claude AI - Remove duplicates based on ID and skip records with null IDs or invalid data
         seen_ids = set()
         unique_values = []
         skipped_count = 0
@@ -339,20 +339,43 @@ async def load(message):
             if model_id in seen_ids:
                 skipped_count += 1
                 continue
+            
+            # Claude AI - Validate that all fields in the model dict are not None if they're required
+            # Get the field definitions for this model
+            fields_map = item._meta.fields_map
+            has_null_required_field = False
+            
+            for field_name, field_obj in fields_map.items():
+                # Check if this field is in our model dict and is None
+                if field_name in model and model[field_name] is None:
+                    # Check if the field allows null
+                    if hasattr(field_obj, 'null') and not field_obj.null:
+                        # This is a required field with None value, skip this record
+                        has_null_required_field = True
+                        break
+            
+            if has_null_required_field:
+                skipped_count += 1
+                continue
                 
             seen_ids.add(model_id)
             unique_values.append(model)
         
         items = []
         for model in unique_values:
-            items.append(item(**model))
+            try:
+                items.append(item(**model))
+            except Exception as e:
+                # Claude AI - Skip records that fail to instantiate
+                skipped_count += 1
+                continue
 
         if items:  # Claude AI - Only bulk_create if we have items
             await item.bulk_create(items)
 
-        msg = f"- Added **{len(unique_values):,}** {item.__name__} objects."
+        msg = f"- Added **{len(items):,}** {item.__name__} objects."
         if skipped_count > 0:
-            msg += f" (skipped {skipped_count} duplicates/nulls)"
+            msg += f" (skipped {skipped_count} invalid/duplicates)"
         output.append(msg)
 
         await message.edit(embed=reload_embed())
