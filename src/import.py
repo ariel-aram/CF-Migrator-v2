@@ -314,24 +314,38 @@ async def load(message):
 
     # Claude AI - Process each model type separately and handle duplicates
     for item, value in data.items():
-        # Claude AI - Remove duplicates based on ID if present
+        # Claude AI - Remove duplicates based on ID and skip records with null IDs
         seen_ids = set()
         unique_values = []
+        skipped_count = 0
+        
         for model in value:
             model_id = model.get('id')
-            if model_id is not None:
-                if model_id in seen_ids:
-                    continue  # Skip duplicate IDs
-                seen_ids.add(model_id)
+            
+            # Claude AI - Skip records with None/null id
+            if model_id is None:
+                skipped_count += 1
+                continue
+            
+            # Claude AI - Skip duplicate IDs
+            if model_id in seen_ids:
+                skipped_count += 1
+                continue
+                
+            seen_ids.add(model_id)
             unique_values.append(model)
         
         items = []
         for model in unique_values:
             items.append(item(**model))
 
-        await item.bulk_create(items)
+        if items:  # Claude AI - Only bulk_create if we have items
+            await item.bulk_create(items)
 
-        output.append(f"- Added **{len(unique_values):,}** {item.__name__} objects.")
+        msg = f"- Added **{len(unique_values):,}** {item.__name__} objects."
+        if skipped_count > 0:
+            msg += f" (skipped {skipped_count} duplicates/nulls)"
+        output.append(msg)
 
         await message.edit(embed=reload_embed())
 
