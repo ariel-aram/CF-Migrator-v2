@@ -8,6 +8,7 @@ from typing import cast
 import discord
 from tortoise import Tortoise
 from tortoise.fields.data import DatetimeField, DateField, FloatField, IntField
+from tortoise.exceptions import ValidationError  # Claude AI - Added for error handling
 
 from ballsdex.core.models import (
     Ball,
@@ -322,7 +323,10 @@ async def load(message):
 
     # Claude AI - Process each model type separately and handle duplicates
     for item, value in data.items():
-        # Claude AI - Remove duplicates based on ID and skip records with null IDs or invalid data
+        # Claude AI - Get field definitions to check which fields are required
+        fields_map = item._meta.fields_map
+        
+        # Claude AI - Remove duplicates based on ID and skip records with invalid data
         seen_ids = set()
         unique_values = []
         skipped_count = 0
@@ -340,38 +344,51 @@ async def load(message):
                 skipped_count += 1
                 continue
             
-            # Claude AI - Validate that all fields in the model dict are not None if they're required
-            # Get the field definitions for this model
-            fields_map = item._meta.fields_map
-            has_null_required_field = False
-            
-            for field_name, field_obj in fields_map.items():
-                # Check if this field is in our model dict and is None
-                if field_name in model and model[field_name] is None:
-                    # Check if the field allows null
+            # Claude AI - Check for None values in non-nullable fields
+            skip_record = False
+            for field_name, field_value in model.items():
+                if field_value is None and field_name in fields_map:
+                    field_obj = fields_map[field_name]
+                    # Check if field is required (not null and not a relation field)
                     if hasattr(field_obj, 'null') and not field_obj.null:
-                        # This is a required field with None value, skip this record
-                        has_null_required_field = True
+                        skip_record = True
                         break
             
-            if has_null_required_field:
+            if skip_record:
                 skipped_count += 1
                 continue
                 
             seen_ids.add(model_id)
             unique_values.append(model)
         
+        # Claude AI - Create model instances with additional error handling
         items = []
         for model in unique_values:
             try:
-                items.append(item(**model))
-            except Exception as e:
-                # Claude AI - Skip records that fail to instantiate
+                instance = item(**model)
+                items.append(instance)
+            except (ValueError, ValidationError) as e:
+                # Claude AI - Skip records that fail validation
                 skipped_count += 1
                 continue
 
         if items:  # Claude AI - Only bulk_create if we have items
-            await item.bulk_create(items)
+            try:
+                await item.bulk_create(items)
+            except Exception as e:
+                # Claude AI - If bulk_create fails, try one by one
+                output.append(f"- Bulk create failed for {item.__name__}, trying individually...")
+                await message.edit(embed=reload_embed())
+                
+                success_count = 0
+                for single_item in items:
+                    try:
+                        await single_item.save()
+                        success_count += 1
+                    except Exception:
+                        skipped_count += 1
+                
+                items = [None] * success_count  # Just for counting
 
         msg = f"- Added **{len(items):,}** {item.__name__} objects."
         if skipped_count > 0:
