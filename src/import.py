@@ -268,13 +268,13 @@ async def load(message):
     section = ""
     data = {}
 
-    # Claude AI - Open a log file for skipped records
-    skipped_log = open("/home/claude/skipped_records.log", "w", encoding="utf-8")
+    # Claude AI - Open a log file for skipped records (use current directory)
+    skipped_log = open("skipped_records.log", "w", encoding="utf-8")
     skipped_log.write("=== MIGRATION SKIPPED RECORDS LOG ===\n")
     skipped_log.write(f"Generated: {datetime.now()}\n\n")
     
     # Claude AI - Open a log file for placeholder assignments
-    placeholder_log = open("/home/claude/placeholder_assignments.log", "w", encoding="utf-8")
+    placeholder_log = open("placeholder_assignments.log", "w", encoding="utf-8")
     placeholder_log.write("=== PLACEHOLDER ASSIGNMENTS LOG ===\n")
     placeholder_log.write(f"Generated: {datetime.now()}\n")
     placeholder_log.write("Records assigned to placeholder entities (grouped by original missing reference):\n\n")
@@ -568,8 +568,13 @@ async def load(message):
     
     # Claude AI - Copy log files to outputs directory
     import shutil
-    shutil.copy("/home/claude/skipped_records.log", "/mnt/user-data/outputs/skipped_records.log")
-    shutil.copy("/home/claude/placeholder_assignments.log", "/mnt/user-data/outputs/placeholder_assignments.log")
+    import os
+    
+    if os.path.exists("skipped_records.log"):
+        shutil.copy("skipped_records.log", "/mnt/user-data/outputs/skipped_records.log")
+    
+    if os.path.exists("placeholder_assignments.log"):
+        shutil.copy("placeholder_assignments.log", "/mnt/user-data/outputs/placeholder_assignments.log")
     
     output.append("- Migration complete! Logs saved: skipped_records.log, placeholder_assignments.log")
 
