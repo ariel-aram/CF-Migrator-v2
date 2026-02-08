@@ -32,6 +32,26 @@ def safe_int(value):
     except (TypeError, ValueError):
         return None
 
+def safe_datetime(value):
+    if value in (None, "", "None"):
+        return None
+
+    if isinstance(value, datetime):
+        return value
+
+    try:
+        f = float(value)
+        if f > 10_000_000_000:
+            return datetime.fromtimestamp(f)
+        return None
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
 SECTIONS = {
     "R": [Regime, ["id", "background", "name"]],
     "E": [Economy, ["id", "icon", "name"]],
@@ -257,7 +277,7 @@ async def load(message):
                 elif isinstance(field_type, FloatField):
                     line_data = float(line_data)
                 elif isinstance(field_type, DatetimeField):
-                    line_data = datetime.fromisoformat(cast(str, line_data))
+                    line_data = safe_datetime(line_data)
 
             if isinstance(line_data, str):
                 line_data = line_data.replace("🮈", "\n")
