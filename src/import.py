@@ -26,6 +26,7 @@ from ballsdex.core.models import (
 
 __version__ = "1.0.1"
 
+# ----------- ChatGPT Starts Here -------------
 def safe_int(value):
     try:
         return int(value)
@@ -41,15 +42,15 @@ def safe_datetime(value):
 
     try:
         f = float(value)
-        if f > 10_000_000_000:
+
+        if 0 <= f <= 4_102_444_800:
             return datetime.fromtimestamp(f)
-        return None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OSError):
         pass
 
     try:
-        return datetime.fromisoformat(value)
-    except ValueError:
+        return datetime.fromisoformat(str(value))
+    except (ValueError, TypeError):
         return None
     
 def safe_date(value):
@@ -71,6 +72,8 @@ def safe_date(value):
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+# ----------- ChatGPT Ends Here -------------
 
 SECTIONS = {
     "R": [Regime, ["id", "background", "name"]],
@@ -295,10 +298,10 @@ async def load(message):
                     line_data = safe_int(line_data)
                 elif isinstance(field_type, FloatField):
                     line_data = float(line_data)
-                elif isinstance(field_type, DatetimeField):
-                    line_data = safe_datetime(line_data)
-                elif isinstance(field_type, DateField):
-                    line_data = safe_date(line_data)
+                elif isinstance(field_type, DatetimeField): # ChatGPT
+                    line_data = safe_datetime(line_data) # ChatGPT
+                elif isinstance(field_type, DateField): # ChatGPT
+                    line_data = safe_date(line_data) # ChatGPT
 
             if isinstance(line_data, str):
                 line_data = line_data.replace("🮈", "\n")
