@@ -470,7 +470,7 @@ async def load(message):
             # Claude AI - Check for None values in non-nullable fields and set defaults
             skip_record = False
             null_fields = []
-            for field_name, field_value in model.items():
+            for field_name, field_value in list(model.items()):  # Use list() to avoid dict modification during iteration
                 if field_value is None and field_name in fields_map:
                     field_obj = fields_map[field_name]
                     # Check if field is required (not null and not a relation field)
@@ -479,12 +479,15 @@ async def load(message):
                         if field_name == 'country':
                             model[field_name] = 'Unknown'  # Default country
                             placeholder_log.write(f"{item.__name__} ID {model_id}: Set default country='Unknown' (was None)\n")
+                        elif field_name == 'short_name':
+                            model[field_name] = 'Unknown'  # Default short_name
+                            placeholder_log.write(f"{item.__name__} ID {model_id}: Set default short_name='Unknown' (was None)\n")
                         else:
                             null_fields.append(field_name)
                             skip_record = True
             
             if skip_record:
-                skipped_log.write(f"{item.__name__} - ID: {model_id} - SKIPPED: Null required fields: {', '.join(null_fields)}\n")
+                skipped_log.write(f"{item.__name__} - ID: {model_id} - SKIPPED: Null required fields without defaults: {', '.join(null_fields)}\n")
                 skipped_count += 1
                 null_field_count += 1
                 continue
@@ -503,6 +506,21 @@ async def load(message):
             if idx > 0 and idx % 5000 == 0:
                 output[-1] = f"- Creating {item.__name__} instances... ({idx:,}/{len(unique_values):,})"
                 await message.edit(embed=reload_embed())
+            
+            # Claude AI - Final check: ensure no None values in non-nullable fields
+            has_none_issue = False
+            for field_name, field_obj in fields_map.items():
+                if field_name in model and model[field_name] is None:
+                    if hasattr(field_obj, 'null') and not field_obj.null:
+                        skipped_log.write(f"{item.__name__} - ID: {model.get('id')} - SKIPPED at instance creation: Field '{field_name}' is None but required\n")
+                        skipped_log.write(f"  Full model: {model}\n")
+                        validation_fail_count += 1
+                        skipped_count += 1
+                        has_none_issue = True
+                        break
+            
+            if has_none_issue:
+                continue
             
             try:
                 instance = item(**model)
