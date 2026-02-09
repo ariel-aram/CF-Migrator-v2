@@ -470,6 +470,8 @@ async def load(message):
             # Claude AI - Check for None values in non-nullable fields and set defaults
             skip_record = False
             null_fields = []
+            defaults_set = []
+            
             for field_name, field_value in list(model.items()):  # Use list() to avoid dict modification during iteration
                 if field_value is None and field_name in fields_map:
                     field_obj = fields_map[field_name]
@@ -478,13 +480,16 @@ async def load(message):
                         # Claude AI - Set default values for common fields instead of skipping
                         if field_name == 'country':
                             model[field_name] = 'Unknown'  # Default country
-                            placeholder_log.write(f"{item.__name__} ID {model_id}: Set default country='Unknown' (was None)\n")
+                            defaults_set.append(f"{field_name}='Unknown'")
                         elif field_name == 'short_name':
                             model[field_name] = 'Unknown'  # Default short_name
-                            placeholder_log.write(f"{item.__name__} ID {model_id}: Set default short_name='Unknown' (was None)\n")
+                            defaults_set.append(f"{field_name}='Unknown'")
                         else:
                             null_fields.append(field_name)
                             skip_record = True
+            
+            if defaults_set:
+                placeholder_log.write(f"{item.__name__} ID {model_id}: Set defaults: {', '.join(defaults_set)}\n")
             
             if skip_record:
                 skipped_log.write(f"{item.__name__} - ID: {model_id} - SKIPPED: Null required fields without defaults: {', '.join(null_fields)}\n")
@@ -537,6 +542,15 @@ async def load(message):
         await message.edit(embed=reload_embed())
 
         if items:  # Claude AI - Only bulk_create if we have items
+            # Claude AI - Final sanity check before bulk_create
+            for check_item in items[:5]:  # Check first 5 items
+                for field_name, field_obj in fields_map.items():
+                    if hasattr(field_obj, 'null') and not field_obj.null:
+                        val = getattr(check_item, field_name, "MISSING")
+                        if val is None or val == "MISSING":
+                            skipped_log.write(f"PRE-BULK-CREATE CHECK: {item.__name__} has None in required field '{field_name}'\n")
+                            skipped_log.write(f"  Instance dict: {check_item.__dict__}\n")
+            
             try:
                 await item.bulk_create(items)
                 
@@ -547,6 +561,12 @@ async def load(message):
                 # Claude AI - Log the actual error - this shouldn't happen if validation worked
                 error_msg = f"ERROR: {type(e).__name__}: {str(e)[:500]}"
                 skipped_log.write(f"\n{item.__name__} BULK CREATE FAILED (THIS IS A BUG): {error_msg}\n")
+                
+                # Claude AI - Log first few items to see what we tried to insert
+                skipped_log.write(f"First 3 items that failed:\n")
+                for i, failed_item in enumerate(items[:3]):
+                    skipped_log.write(f"  Item {i}: {failed_item.__dict__}\n")
+                
                 output.append(f"- CRITICAL ERROR: Bulk create failed for {item.__name__}: {error_msg}")
                 output.append(f"- Check skipped_records.log for details. Stopping migration.")
                 await message.edit(embed=reload_embed())
