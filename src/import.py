@@ -234,7 +234,15 @@ def reload_embed(start_time: float | None = None, status="RUNNING"):
             embed.color = discord.Color.red()
 
     if len(output) > 0:
-        embed.add_field(name="Output", value="\n".join(output))
+        # Claude AI - Only show last 20 lines to avoid Discord's 1024 char limit
+        recent_output = output[-20:] if len(output) > 20 else output
+        output_text = "\n".join(recent_output)
+        
+        # Claude AI - If still too long, truncate
+        if len(output_text) > 1000:
+            output_text = "...\n" + output_text[-1000:]
+        
+        embed.add_field(name="Output", value=output_text)
 
     if start_time is not None:
         embed.set_footer(text=f"Ended migration in {round((time.time() - start_time), 3)}s")
@@ -242,11 +250,16 @@ def reload_embed(start_time: float | None = None, status="RUNNING"):
     return embed
 
 
-async def get_or_create_placeholder_player(missing_player_id, placeholder_log):
+async def get_or_create_placeholder_player(missing_player_id, placeholder_log, created_placeholders):
     """
     Create a unique placeholder Player for a specific missing player ID.
-    Uses discord_id offset to make them identifiable and recoverable.
+    Returns the NEW database ID (pk) of the placeholder.
     """
+    # Claude AI - Check if we already created this placeholder
+    placeholder_key = f"Player_{missing_player_id}"
+    if placeholder_key in created_placeholders:
+        return created_placeholders[placeholder_key]
+    
     # Claude AI - Use a large negative offset to indicate placeholder
     # Original player_id=123 becomes discord_id=-10000000123
     placeholder_discord_id = -10000000000 - missing_player_id
@@ -258,8 +271,10 @@ async def get_or_create_placeholder_player(missing_player_id, placeholder_log):
             donation_policy=0,
             privacy_policy=0
         )
-        placeholder_log.write(f"Created placeholder Player (discord_id={placeholder_discord_id}) for missing Player ID {missing_player_id}\n")
+        placeholder_log.write(f"Created placeholder Player (discord_id={placeholder_discord_id}, DB ID={placeholder_player.pk}) for missing Player ID {missing_player_id}\n")
     
+    # Claude AI - Cache and return the actual database PK
+    created_placeholders[placeholder_key] = placeholder_player.pk
     return placeholder_player.pk
 
 
@@ -420,26 +435,29 @@ async def load(message):
             for fk_field_name, related_model in fk_fields.items():
                 fk_value = model.get(fk_field_name)
                 if fk_value is not None:
-                    # Check if the referenced ID exists in our inserted_ids tracking
-                    if related_model in inserted_ids:
-                        if fk_value not in inserted_ids[related_model]:
-                            # Claude AI - Instead of skipping, create a placeholder if it's a Player
+                    # Claude AI - Check if the referenced ID exists either in inserted_ids OR in the database
+                    exists_in_tracking = related_model in inserted_ids and fk_value in inserted_ids[related_model]
+                    
+                    if not exists_in_tracking:
+                        # Claude AI - Check if it exists in the actual database
+                        exists_in_db = await related_model.filter(pk=fk_value).exists()
+                        
+                        if not exists_in_db:
+                            # Claude AI - Only create placeholder if it truly doesn't exist anywhere
                             if related_model == Player:
-                                # Check if we already created this placeholder
-                                placeholder_key = f"Player_{fk_value}"
-                                if placeholder_key not in created_placeholders:
-                                    placeholder_id = await get_or_create_placeholder_player(fk_value, placeholder_log)
-                                    created_placeholders[placeholder_key] = placeholder_id
-                                    # Add to inserted_ids so future records can reference it
-                                    inserted_ids[Player].add(placeholder_id)
-                                else:
-                                    placeholder_id = created_placeholders[placeholder_key]
+                                # Create placeholder and get its NEW database ID
+                                placeholder_id = await get_or_create_placeholder_player(fk_value, placeholder_log, created_placeholders)
                                 
-                                # Update the model to use the placeholder
+                                # Add to inserted_ids so future records can reference it
+                                if Player not in inserted_ids:
+                                    inserted_ids[Player] = set()
+                                inserted_ids[Player].add(placeholder_id)
+                                
+                                # Update the model to use the placeholder's NEW ID
                                 model[fk_field_name] = placeholder_id
-                                placeholder_log.write(f"{item.__name__} ID {model_id}: Assigned {fk_field_name}={placeholder_id} (was {fk_value})\n")
+                                placeholder_log.write(f"{item.__name__} ID {model_id}: Reassigned {fk_field_name} from missing Player ID {fk_value} to placeholder DB ID {placeholder_id}\n")
                             else:
-                                # For other models, still skip (or you can add placeholder logic for them too)
+                                # For other models, still skip
                                 skipped_log.write(f"{item.__name__} - ID: {model_id} - SKIPPED: Invalid FK {fk_field_name}={fk_value} (references non-existent {related_model.__name__})\n")
                                 has_invalid_fk = True
                                 fk_violation_count += 1
