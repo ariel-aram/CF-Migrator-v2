@@ -362,20 +362,32 @@ async def load(message):
                     emoji_id_int = int(emoji_id)
                     emoji_id_str = str(emoji_id_int)
                     if len(emoji_id_str) < 17 or len(emoji_id_str) > 19:
-                        skipped_log.write(f"{item.__name__} - ID: {model.get('id')} - SKIPPED: Invalid emoji_id length {len(emoji_id_str)} (value: {emoji_id})\n")
-                        skipped_count += 1
-                        validation_fail_count += 1
-                        emoji_validation_count += 1
-                        continue
+                        # FIX invalid emoji_id with a valid placeholder (don't skip!)
+                        model['emoji_id'] = 1234567890123456789  # Valid 19-digit placeholder
+                        placeholder_log.write(f"{item.__name__} ID {model.get('id')}: Fixed invalid emoji_id (was {emoji_id}, len={len(emoji_id_str)})\n")
+                        defaults_set.append(f"emoji_id=placeholder")
                 except (ValueError, TypeError):
-                    skipped_log.write(f"{item.__name__} - ID: {model.get('id')} - SKIPPED: Invalid emoji_id format (value: {emoji_id})\n")
-                    skipped_count += 1
-                    validation_fail_count += 1
-                    emoji_validation_count += 1
-                    continue
+                    # FIX non-numeric emoji_id
+                    model['emoji_id'] = 1234567890123456789  # Valid 19-digit placeholder
+                    placeholder_log.write(f"{item.__name__} ID {model.get('id')}: Fixed non-numeric emoji_id (was {emoji_id})\n")
+                    defaults_set.append(f"emoji_id=placeholder")
             
             try:
                 instance = item(**model)
+                # Validate the instance BEFORE adding to items
+                # This will catch custom validators like emoji_id length check
+                try:
+                    await instance.full_clean()
+                except AttributeError:
+                    # full_clean might not exist, try manual field validation
+                    pass
+                except ValidationError as ve:
+                    skipped_log.write(f"{item.__name__} - ID: {model.get('id')} - SKIPPED: Instance validation error: {str(ve)[:200]}\n")
+                    skipped_log.write(f"  emoji_id: {model.get('emoji_id')}\n")
+                    skipped_count += 1
+                    validation_fail_count += 1
+                    continue
+                
                 items.append(instance)
             except (ValueError, ValidationError) as e:
                 skipped_log.write(f"{item.__name__} - ID: {model.get('id')} - SKIPPED: Validation error: {str(e)[:200]}\n")
@@ -392,6 +404,21 @@ async def load(message):
         await message.edit(embed=reload_embed())
 
         if items:
+            # CRITICAL: Fix ALL instances with invalid data before bulk_create
+            fixed_count = 0
+            for instance in items:
+                # Check emoji_id if it exists
+                if hasattr(instance, 'emoji_id') and instance.emoji_id is not None:
+                    emoji_str = str(instance.emoji_id)
+                    if len(emoji_str) < 17 or len(emoji_str) > 19:
+                        instance.emoji_id = 1234567890123456789  # Valid placeholder
+                        placeholder_log.write(f"{item.__name__} - ID: {getattr(instance, 'id', 'unknown')} - Fixed emoji_id at pre-bulk (was {emoji_str}, len={len(emoji_str)})\n")
+                        fixed_count += 1
+            
+            if fixed_count > 0:
+                output.append(f"  Fixed {fixed_count} invalid emoji_ids")
+                await message.edit(embed=reload_embed())
+            
             try:
                 await item.bulk_create(items)
                 inserted_ids[item] = seen_ids
