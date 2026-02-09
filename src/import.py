@@ -343,14 +343,14 @@ async def load(message):
                 output[-1] = f"- Creating {item.__name__} instances... ({idx:,}/{len(unique_values):,})"
                 await message.edit(embed=reload_embed())
             
-            # Final pass: ensure common required fields have defaults
-            if 'short_name' in model and model['short_name'] is None:
+            # CRITICAL: Set defaults for required fields if they're None or missing
+            if model.get('short_name') is None:
                 model['short_name'] = 'Unknown'
-            if 'country' in model and model['country'] is None:
+            if model.get('country') is None:
                 model['country'] = 'Unknown'
-            if 'enabled' in model and model['enabled'] is None:
+            if model.get('enabled') is None:
                 model['enabled'] = True
-            if 'tradeable' in model and model['tradeable'] is None:
+            if model.get('tradeable') is None:
                 model['tradeable'] = True
             
             try:
