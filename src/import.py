@@ -406,14 +406,24 @@ async def load(message):
         if items:
             # CRITICAL: Fix ALL instances with invalid data before bulk_create
             fixed_count = 0
-            for instance in items:
+            for idx, instance in enumerate(items):
                 # Check emoji_id if it exists
                 if hasattr(instance, 'emoji_id') and instance.emoji_id is not None:
                     emoji_str = str(instance.emoji_id)
                     if len(emoji_str) < 17 or len(emoji_str) > 19:
+                        old_val = instance.emoji_id
                         instance.emoji_id = 1234567890123456789  # Valid placeholder
-                        placeholder_log.write(f"{item.__name__} - ID: {getattr(instance, 'id', 'unknown')} - Fixed emoji_id at pre-bulk (was {emoji_str}, len={len(emoji_str)})\n")
+                        placeholder_log.write(f"{item.__name__} - ID: {getattr(instance, 'id', 'unknown')} (item #{idx}) - Fixed emoji_id={old_val} (len={len(emoji_str)})\n")
                         fixed_count += 1
+            
+            # Log ALL emoji_ids to find the problem
+            if item.__name__ == 'Ball':
+                placeholder_log.write(f"\n=== ALL BALL EMOJI_IDS ===\n")
+                for idx, instance in enumerate(items):
+                    eid = getattr(instance, 'emoji_id', None)
+                    eid_len = len(str(eid)) if eid is not None else 0
+                    placeholder_log.write(f"Ball ID {getattr(instance, 'id', '?')} (item #{idx}): emoji_id={eid} (len={eid_len})\n")
+                placeholder_log.write(f"=== END EMOJI_IDS ===\n\n")
             
             if fixed_count > 0:
                 output.append(f"  Fixed {fixed_count} invalid emoji_ids")
