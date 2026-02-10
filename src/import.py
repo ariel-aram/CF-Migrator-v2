@@ -404,30 +404,52 @@ async def load(message):
         await message.edit(embed=reload_embed())
 
         if items:
-            # CRITICAL: Fix ALL instances with invalid data before bulk_create
+            # CRITICAL: Fix ALL instances - loop every required field generically
             fixed_count = 0
-            for idx, instance in enumerate(items):
-                # Check emoji_id - fix if None OR invalid length
-                if hasattr(instance, 'emoji_id'):
-                    eid = instance.emoji_id
-                    needs_fix = False
+            STRING_FIELD_TYPES = ('CharField', 'TextField')
+            
+            for instance in items:
+                instance_fields = instance._meta.fields_map
+                for field_name, field_obj in instance_fields.items():
+                    # Skip relation fields
+                    if hasattr(field_obj, 'related_model'):
+                        continue
+                    # Only care about non-nullable fields
+                    if not (hasattr(field_obj, 'null') and not field_obj.null):
+                        continue
                     
-                    if eid is None:
-                        needs_fix = True
-                        old_val = "None"
+                    val = getattr(instance, field_name, None)
+                    if val is not None:
+                        # Special case: emoji_id must be 17-19 digits
+                        if field_name == 'emoji_id':
+                            if len(str(val)) < 17 or len(str(val)) > 19:
+                                setattr(instance, field_name, 1234567890123456789)
+                                placeholder_log.write(f"{item.__name__} ID {getattr(instance, 'id', '?')}: Fixed invalid emoji_id={val}\n")
+                                fixed_count += 1
+                        continue
+                    
+                    # Field is None but required - set a sensible default
+                    field_type = type(field_obj).__name__
+                    if field_name == 'emoji_id':
+                        setattr(instance, field_name, 1234567890123456789)
+                    elif field_type in STRING_FIELD_TYPES:
+                        setattr(instance, field_name, 'Unknown')
+                    elif field_type == 'IntField':
+                        setattr(instance, field_name, 0)
+                    elif field_type == 'FloatField':
+                        setattr(instance, field_name, 0.0)
+                    elif field_type == 'BooleanField':
+                        setattr(instance, field_name, False)
+                    elif field_type in ('DatetimeField', 'DateField'):
+                        setattr(instance, field_name, datetime.now())
                     else:
-                        emoji_str = str(eid)
-                        if len(emoji_str) < 17 or len(emoji_str) > 19:
-                            needs_fix = True
-                            old_val = f"{eid} (len={len(emoji_str)})"
+                        setattr(instance, field_name, 'Unknown')
                     
-                    if needs_fix:
-                        instance.emoji_id = 1234567890123456789  # Valid placeholder
-                        placeholder_log.write(f"{item.__name__} - ID: {getattr(instance, 'id', 'unknown')} (item #{idx}) - Fixed emoji_id={old_val}\n")
-                        fixed_count += 1
+                    placeholder_log.write(f"{item.__name__} ID {getattr(instance, 'id', '?')}: Fixed None required field '{field_name}' (type={field_type})\n")
+                    fixed_count += 1
             
             if fixed_count > 0:
-                output.append(f"  Fixed {fixed_count} invalid emoji_ids")
+                output.append(f"  Fixed {fixed_count} None required fields before save")
                 await message.edit(embed=reload_embed())
             
             try:
