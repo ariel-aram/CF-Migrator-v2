@@ -417,7 +417,28 @@ async def load(message):
             
             try:
                 instance = item(**model)
-                # Validate the instance BEFORE adding to items
+                
+                # CRITICAL: Check FK fields directly on the instance after creation
+                # Tortoise may not propagate model dict changes correctly for FK fields
+                for fk_field_name in list(fk_fields.keys()):
+                    if not fk_field_name.endswith('_id'):
+                        continue
+                    inst_val = getattr(instance, fk_field_name, None)
+                    if inst_val == 0:
+                        # Zero is never valid - fix it directly on the instance
+                        related_model = fk_fields[fk_field_name]
+                        base_name = fk_field_name[:-3]
+                        field_obj = fields_map.get(base_name)
+                        is_nullable = field_obj is not None and getattr(field_obj, 'null', False)
+                        if is_nullable:
+                            setattr(instance, fk_field_name, None)
+                        elif related_model == Player:
+                            placeholder_id = await get_or_create_placeholder_player(0, placeholder_log, created_placeholders)
+                            if Player not in inserted_ids:
+                                inserted_ids[Player] = set()
+                            inserted_ids[Player].add(placeholder_id)
+                            setattr(instance, fk_field_name, placeholder_id)
+                            placeholder_log.write(f"{item.__name__} ID {model.get('id')}: Fixed instance {fk_field_name}=0 → {placeholder_id}\n")
                 # This will catch custom validators like emoji_id length check
                 try:
                     await instance.full_clean()
