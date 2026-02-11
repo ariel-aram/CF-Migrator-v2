@@ -286,6 +286,21 @@ async def load(message):
             has_invalid_fk = False
             for fk_field_name, related_model in fk_fields.items():
                 fk_value = model.get(fk_field_name)
+                
+                # Treat 0 as invalid - either null it out or replace with placeholder
+                if fk_value == 0:
+                    field_obj = fields_map.get(fk_field_name) or fields_map.get(fk_field_name.replace('_id', ''))
+                    is_nullable = field_obj and getattr(field_obj, 'null', True)
+                    if is_nullable:
+                        model[fk_field_name] = None
+                    elif related_model == Player:
+                        placeholder_id = await get_or_create_placeholder_player(0, placeholder_log, created_placeholders)
+                        if Player not in inserted_ids:
+                            inserted_ids[Player] = set()
+                        inserted_ids[Player].add(placeholder_id)
+                        model[fk_field_name] = placeholder_id
+                    fk_value = None  # Mark as handled
+                
                 if fk_value is not None:
                     exists_in_tracking = related_model in inserted_ids and fk_value in inserted_ids[related_model]
                     
