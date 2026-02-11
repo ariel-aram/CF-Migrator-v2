@@ -473,6 +473,9 @@ async def load(message):
                 await item.bulk_create(items)
                 inserted_ids[item] = seen_ids
                 
+                # Reset sequence immediately after insert so any subsequent .create() calls get correct IDs
+                await sequence_model(item)
+                
             except Exception as e:
                 error_msg = f"ERROR: {type(e).__name__}: {str(e)[:500]}"
                 skipped_log.write(f"\n{item.__name__} BULK CREATE FAILED: {error_msg}\n")
