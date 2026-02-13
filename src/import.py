@@ -234,18 +234,10 @@ async def load(message):
                 line_data = line_data.replace("🮈", "\n")
 
             model_dict[value] = line_data
-        
-        # Claude AI - CRITICAL: Offset Exclusive IDs to avoid conflicts with Event IDs
-        # Both S-EV and S-EX map to Special, so Event ID 1 != Exclusive ID 1
-        if model_dict is not None and section == "S-EX":
-            if 'id' in model_dict and model_dict['id'] is not None:
-                original_id = model_dict['id']
-                new_id = original_id + 10000
-                exclusive_id_map[original_id] = new_id  # Track mapping for BallInstance updates
-                model_dict['id'] = new_id
-                placeholder_log.write(f"Exclusive ID {original_id} offset to {new_id}\n")
-        
+
         if model_dict is not None:
+            # Claude AI - Track which section this came from for duplicate handling
+            model_dict['_section'] = section
             data[section_full[0]].append(model_dict)
 
     output.append(f"- Finished reading migration file. Processing {len(data)} model types...")
@@ -293,16 +285,37 @@ async def load(message):
             
             model_id = model.get('id')
             
+            # Claude AI - Extract and remove section marker (not a real field)
+            section_type = model.pop('_section', None)
+            
             if model_id is None:
                 skipped_log.write(f"{item.__name__} - ID: None - SKIPPED: Null ID\n")
                 skipped_count += 1
                 continue
             
             if model_id in seen_ids:
-                skipped_log.write(f"{item.__name__} - ID: {model_id} - SKIPPED: Duplicate ID\n")
-                skipped_count += 1
-                duplicate_count += 1
-                continue
+                # Claude AI - Special case: Events and Exclusives can have same ID
+                # Keep both by offsetting Exclusive IDs
+                if item == Special and section_type in ["S-EV", "S-EX"]:
+                    if section_type == "S-EX":
+                        # Offset Exclusive ID to avoid conflict with Event ID
+                        original_id = model_id
+                        model_id = model_id + 10000
+                        model['id'] = model_id
+                        exclusive_id_map[original_id] = model_id
+                        placeholder_log.write(f"Exclusive ID {original_id} offset to {model_id} (would conflict with Event ID {original_id})\n")
+                    
+                    # Check if it's still a duplicate after offset
+                    if model_id in seen_ids:
+                        skipped_log.write(f"{item.__name__} - ID: {model_id} - SKIPPED: Duplicate ID even after Exclusive offset\n")
+                        skipped_count += 1
+                        duplicate_count += 1
+                        continue
+                else:
+                    skipped_log.write(f"{item.__name__} - ID: {model_id} - SKIPPED: Duplicate ID\n")
+                    skipped_count += 1
+                    duplicate_count += 1
+                    continue
             
             # Validate foreign key references and create placeholders if needed
             has_invalid_fk = False
@@ -337,9 +350,11 @@ async def load(message):
                     continue  # Done handling this field
                 
                 # Normal FK validation
+                # Check three places: current batch (seen_ids), previous batches (inserted_ids), existing DB
+                exists_in_current_batch = related_model == item and fk_value in seen_ids
                 exists_in_tracking = related_model in inserted_ids and fk_value in inserted_ids[related_model]
                 
-                if not exists_in_tracking:
+                if not exists_in_current_batch and not exists_in_tracking:
                     exists_in_db = await related_model.filter(pk=fk_value).exists()
                     
                     if not exists_in_db:
@@ -351,9 +366,22 @@ async def load(message):
                             model[fk_field_name] = placeholder_id
                             placeholder_log.write(f"{item.__name__} ID {model_id}: Reassigned {fk_field_name} from missing Player ID {fk_value} to placeholder DB ID {placeholder_id}\n")
                         elif related_model == Special:
-                            # Special is nullable - if it doesn't exist, just null it out
-                            model[fk_field_name] = None
-                            placeholder_log.write(f"{item.__name__} ID {model_id}: Set {fk_field_name}=None (Special ID {fk_value} not found - might be Event/Exclusive ID conflict)\n")
+                            # Special is nullable - but first check if this might be an Exclusive reference
+                            if fk_value in exclusive_id_map:
+                                # Try the Exclusive offset
+                                offset_id = exclusive_id_map[fk_value]
+                                offset_exists = offset_id in (inserted_ids.get(Special, set()))
+                                if offset_exists or await Special.filter(pk=offset_id).exists():
+                                    model[fk_field_name] = offset_id
+                                    placeholder_log.write(f"{item.__name__} ID {model_id}: Updated {fk_field_name} from {fk_value} to {offset_id} (Exclusive offset)\n")
+                                else:
+                                    # Neither Event nor Exclusive exists - null it
+                                    model[fk_field_name] = None
+                                    placeholder_log.write(f"{item.__name__} ID {model_id}: Set {fk_field_name}=None (Special ID {fk_value} not found, Exclusive offset {offset_id} also not found)\n")
+                            else:
+                                # No Exclusive offset available - just null it
+                                model[fk_field_name] = None
+                                placeholder_log.write(f"{item.__name__} ID {model_id}: Set {fk_field_name}=None (Special ID {fk_value} not found)\n")
                         else:
                             skipped_log.write(f"{item.__name__} - ID: {model_id} - SKIPPED: Invalid FK {fk_field_name}={fk_value} (references non-existent {related_model.__name__})\n")
                             has_invalid_fk = True
